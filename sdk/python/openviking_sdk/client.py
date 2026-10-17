@@ -92,6 +92,31 @@ ERROR_CODE_TO_EXCEPTION = {
     "UNKNOWN": OpenVikingError,
 }
 
+# These constructors format their message from a structured field (operation,
+# component, session id, service). The server has already formatted it, so
+# passing that message back through the constructor would wrap it again, e.g.
+# "Queue processing timed out timed out".
+_SERVER_FORMATTED_ERRORS = (
+    DeadlineExceededError,
+    NotInitializedError,
+    SessionExpiredError,
+    UnavailableError,
+)
+
+
+def _with_server_message(
+    exc_class: Type[OpenVikingError],
+    message: str,
+    *,
+    code: str,
+    details: Optional[Dict[str, Any]],
+) -> OpenVikingError:
+    """Create a typed error that keeps the server's message unchanged."""
+    exception = exc_class.__new__(exc_class)
+    OpenVikingError.__init__(exception, message, code=code, details=details)
+    return exception
+
+
 GATEWAY_MARKER_HEADER = "X-VikingBot-Gateway"
 GATEWAY_TOKEN_HEADER = "X-Gateway-Token"
 _SESSION_CONFIG_UNSET = object()
@@ -671,10 +696,14 @@ class AsyncHTTPClient:
             resource = details.get("resource", "") if details else ""
             resource_type = details.get("type", "resource") if details else "resource"
             exception = exc_class(resource, resource_type)
-        elif exc_class == UnavailableError:
-            service = details.get("service", "service") if details else "service"
-            reason = details.get("reason", "") if details else message
-            exception = exc_class(service, reason)
+        elif (
+            exc_class == UnavailableError
+            and details
+            and ("service" in details or "reason" in details)
+        ):
+            exception = exc_class(details.get("service", "service"), details.get("reason", ""))
+        elif exc_class in _SERVER_FORMATTED_ERRORS:
+            exception = _with_server_message(exc_class, message, code=code, details=details)
         else:
             exception = exc_class(message)
         if details is not None:

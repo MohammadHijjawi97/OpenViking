@@ -9,8 +9,12 @@ from openviking_cli.client.http import AsyncHTTPClient
 from openviking_cli.exceptions import (
     AbortedError,
     ConflictError,
+    DeadlineExceededError,
+    NotInitializedError,
     OpenVikingError,
     ResourceExhaustedError,
+    SessionExpiredError,
+    UnavailableError,
     UnimplementedError,
 )
 
@@ -63,3 +67,56 @@ def test_client_preserves_unknown_error_code():
 
     assert exc_info.value.code == "PROVIDER_SPECIFIC"
     assert exc_info.value.details == {"x": 1}
+
+
+@pytest.mark.parametrize(
+    ("code", "exc_type", "message", "details"),
+    (
+        (
+            "DEADLINE_EXCEEDED",
+            DeadlineExceededError,
+            "Queue processing timed out",
+            {"operation": "queue processing", "timeout": None},
+        ),
+        (
+            "DEADLINE_EXCEEDED",
+            DeadlineExceededError,
+            "Upstream model request timed out: ReadTimeout",
+            {"upstream_message": "ReadTimeout"},
+        ),
+        (
+            "NOT_INITIALIZED",
+            NotInitializedError,
+            "Vikingfs not initialized. Call initialize() first.",
+            {"component": "VikingFS"},
+        ),
+        (
+            "SESSION_EXPIRED",
+            SessionExpiredError,
+            "Session expired: s1",
+            {"session_id": "s1"},
+        ),
+        (
+            "UNAVAILABLE",
+            UnavailableError,
+            "Storage backend unavailable: lock contention",
+            {"service": "storage backend", "reason": "lock contention"},
+        ),
+        (
+            "UNAVAILABLE",
+            UnavailableError,
+            "Upstream model service unavailable (HTTP 503): overloaded",
+            {"upstream_message": "overloaded", "upstream_status_code": 503},
+        ),
+    ),
+)
+def test_client_keeps_server_formatted_error_message(code, exc_type, message, details):
+    client = AsyncHTTPClient(url="http://127.0.0.1:1933")
+
+    with pytest.raises(exc_type) as exc_info:
+        client._raise_exception({"code": code, "message": message, "details": details})
+
+    assert str(exc_info.value) == message
+    assert exc_info.value.message == message
+    assert exc_info.value.code == code
+    assert exc_info.value.details == details
